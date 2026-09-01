@@ -4,20 +4,31 @@ from app.api.routes.rag import router as rag_router
 
 
 app = FastAPI(
-    title="Regenesys Sales Knowledge Base",
-    description="Hybrid RAG API for the Regenesys sales knowledge base.",
+    title="Sales Knowledge Base",
+    description="Regenesys Sales Knowledge Base RAG API",
     version="1.0.0",
 )
 
 
-app.include_router(
-    rag_router,
-    prefix="/api/v1",
+# ============================================================
+# Routes
+# ============================================================
+
+
+app.include_router(rag_router)
+
+
+# ============================================================
+# Health
+# ============================================================
+
+
+@app.get(
+    "/health",
+    tags=["Health"],
 )
+def health() -> dict[str, str]:
 
-
-@app.get("/health")
-def health():
     return {
         "status": "ok",
     }
