@@ -30,9 +30,9 @@ def hybrid_search(
     query: str,
     *,
     limit: int = 5,
-    vector_weight: float = 0.6,
+    vector_weight: float = 0.55,
     keyword_weight: float = 0.25,
-    metadata_weight: float = 0.15,
+    metadata_weight: float = 0.20,
     category: str | None = None,
     subcategory: str | None = None,
 ) -> list[RetrievedChunk]:
@@ -41,7 +41,9 @@ def hybrid_search(
     # Validate query
     # ---------------------------------------------------------
 
-    if not query.strip():
+    query = query.strip()
+
+    if not query:
         return []
 
     # ---------------------------------------------------------
@@ -75,13 +77,12 @@ def hybrid_search(
             "At least one search weight must be greater than zero."
         )
 
-    # Normalize weights
     vector_weight /= total_weight
     keyword_weight /= total_weight
     metadata_weight /= total_weight
 
     # ---------------------------------------------------------
-    # Create query embedding
+    # Create embedding
     # ---------------------------------------------------------
 
     query_embedding = embed_text(query)
@@ -93,7 +94,7 @@ def hybrid_search(
     schema = settings.db_schema
 
     # ---------------------------------------------------------
-    # SQL
+    # Retrieval SQL
     # ---------------------------------------------------------
 
     sql = text(
@@ -219,32 +220,98 @@ def hybrid_search(
                 ) AS keyword_score,
 
                 (
+                    -- -------------------------------------------------
+                    -- Programme/title relevance
+                    -- -------------------------------------------------
+
                     CASE
 
-                        -- Exact title match
+                        -- Exact title = strongest signal
                         WHEN
-                            lower(d.title)
-                            = lower(:query)
-                        THEN 1.0
+                            lower(trim(d.title))
+                            = lower(trim(:query))
+                        THEN 1.00
 
-                        -- Full query appears in title
+                        -- Entire query appears in title
                         WHEN
                             lower(d.title)
                             LIKE '%' || lower(:query) || '%'
                         THEN 0.90
 
+                        -- Important programme abbreviations
+                        WHEN
+                            lower(d.title) LIKE '%mba%'
+                            AND lower(:query) LIKE '%mba%'
+                        THEN 0.85
+
+                        WHEN
+                            lower(d.title) LIKE '%bba%'
+                            AND lower(:query) LIKE '%bba%'
+                        THEN 0.85
+
+                        WHEN
+                            lower(d.title) LIKE '%dbm%'
+                            AND lower(:query) LIKE '%dbm%'
+                        THEN 0.85
+
+                        WHEN
+                            lower(d.title) LIKE '%pdbm%'
+                            AND lower(:query) LIKE '%pdbm%'
+                        THEN 0.85
+
+                        WHEN
+                            lower(d.title) LIKE '%hcbm%'
+                            AND lower(:query) LIKE '%hcbm%'
+                        THEN 0.85
+
+                        WHEN
+                            lower(d.title) LIKE '%pgpm%'
+                            AND lower(:query) LIKE '%pgpm%'
+                        THEN 0.85
+
+                        WHEN
+                            lower(d.title) LIKE '%pgdm%'
+                            AND lower(:query) LIKE '%pgdm%'
+                        THEN 0.85
+
+                        -- Query contains the programme name
+                        WHEN
+                            lower(:query)
+                            LIKE '%master of business administration%'
+                            AND lower(d.title)
+                            LIKE '%master of business administration%'
+                        THEN 0.85
+
+                        WHEN
+                            lower(:query)
+                            LIKE '%bachelor of business administration%'
+                            AND lower(d.title)
+                            LIKE '%bachelor of business administration%'
+                        THEN 0.85
+
+                        WHEN
+                            lower(:query)
+                            LIKE '%doctor of business management%'
+                            AND lower(d.title)
+                            LIKE '%doctor of business management%'
+                        THEN 0.85
+
                         ELSE 0.0
 
                     END
 
                     +
 
+                    -- -------------------------------------------------
+                    -- Category relevance
+                    -- -------------------------------------------------
+
                     CASE
 
-                        -- Category filter match
                         WHEN
                             CAST(:category AS TEXT) IS NOT NULL
-                            AND d.category = CAST(:category AS TEXT)
+                            AND d.category =
+                                CAST(:category AS TEXT)
                         THEN 0.20
 
                         ELSE 0.0
@@ -253,13 +320,86 @@ def hybrid_search(
 
                     +
 
+                    -- -------------------------------------------------
+                    -- Subcategory relevance
+                    -- -------------------------------------------------
+
                     CASE
 
-                        -- Subcategory filter match
                         WHEN
                             CAST(:subcategory AS TEXT) IS NOT NULL
-                            AND d.subcategory = CAST(:subcategory AS TEXT)
+                            AND d.subcategory =
+                                CAST(:subcategory AS TEXT)
                         THEN 0.20
+
+                        ELSE 0.0
+
+                    END
+
+                    +
+
+                    -- -------------------------------------------------
+                    -- Information-type relevance
+                    -- -------------------------------------------------
+
+                    CASE
+
+                        -- NQF question
+                        WHEN
+                            (
+                                lower(:query) LIKE '%nqf%'
+                                OR lower(:query) LIKE '%qualification level%'
+                                OR lower(:query) LIKE '%level%'
+                            )
+                            AND
+                            lower(c.content) LIKE '%nqf%'
+                        THEN 0.35
+
+                        -- Fee question
+                        WHEN
+                            (
+                                lower(:query) LIKE '%fee%'
+                                OR lower(:query) LIKE '%fees%'
+                                OR lower(:query) LIKE '%cost%'
+                                OR lower(:query) LIKE '%price%'
+                                OR lower(:query) LIKE '%tuition%'
+                            )
+                            AND
+                            (
+                                lower(c.content) LIKE '%fee%'
+                                OR lower(c.content) LIKE '%zar%'
+                                OR lower(c.content) LIKE '%usd%'
+                                OR lower(c.content) LIKE '%monthly%'
+                            )
+                        THEN 0.35
+
+                        -- Eligibility question
+                        WHEN
+                            (
+                                lower(:query) LIKE '%eligib%'
+                                OR lower(:query) LIKE '%admission%'
+                                OR lower(:query) LIKE '%entry requirement%'
+                            )
+                            AND
+                            (
+                                lower(c.content) LIKE '%eligibility%'
+                                OR lower(c.content) LIKE '%requirement%'
+                            )
+                        THEN 0.35
+
+                        -- Duration question
+                        WHEN
+                            (
+                                lower(:query) LIKE '%duration%'
+                                OR lower(:query) LIKE '%how long%'
+                            )
+                            AND
+                            (
+                                lower(c.content) LIKE '%duration%'
+                                OR lower(c.content) LIKE '%year%'
+                                OR lower(c.content) LIKE '%month%'
+                            )
+                        THEN 0.35
 
                         ELSE 0.0
 
@@ -310,6 +450,7 @@ def hybrid_search(
                         hybrid_score DESC,
                         vector_score DESC,
                         keyword_score DESC,
+                        metadata_score DESC,
                         chunk_id
                 ) AS document_rank
 
@@ -341,6 +482,7 @@ def hybrid_search(
             hybrid_score DESC,
             vector_score DESC,
             keyword_score DESC,
+            metadata_score DESC,
             document_id
 
         LIMIT :limit
@@ -348,7 +490,7 @@ def hybrid_search(
     )
 
     # ---------------------------------------------------------
-    # Execute
+    # Execute query
     # ---------------------------------------------------------
 
     with engine.connect() as conn:
@@ -369,8 +511,8 @@ def hybrid_search(
                 "limit": limit,
 
                 "candidate_limit": max(
-                    limit * 5,
-                    20,
+                    limit * 8,
+                    30,
                 ),
 
                 "vector_weight": vector_weight,
@@ -382,7 +524,7 @@ def hybrid_search(
         ).mappings().all()
 
     # ---------------------------------------------------------
-    # Convert database rows
+    # Convert rows
     # ---------------------------------------------------------
 
     return [
