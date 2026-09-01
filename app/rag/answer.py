@@ -1,6 +1,7 @@
 from app.llm.factory import get_llm
 from app.rag.context import build_context
 from app.retrieval.hybrid import hybrid_search
+from app.query.understanding import understand_query
 
 
 SYSTEM_PROMPT = """
@@ -63,11 +64,25 @@ def answer_question(
     # Retrieve
     # ---------------------------------------------------------
 
+    understanding = understand_query(question)
+    # Explicit API filters override automatic query understanding.
+    effective_category = (
+        category
+        if category is not None
+        else understanding.category
+    )
+
+    effective_subcategory = (
+        subcategory
+        if subcategory is not None
+        else understanding.subcategory
+    )
+
     results = hybrid_search(
-        question,
+        understanding.search_query,
         limit=limit,
-        category=category,
-        subcategory=subcategory,
+        category=effective_category,
+        subcategory=effective_subcategory,
     )
 
     # ---------------------------------------------------------
