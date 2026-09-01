@@ -12,6 +12,10 @@ class Settings(BaseSettings):
 
     embedding_model: str = "BAAI/bge-base-en-v1.5"
 
+    llm_provider: str = "groq"
+    llm_model: str = "openai/gpt-oss-120b"
+    groq_api_key: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
