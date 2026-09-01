@@ -8,16 +8,18 @@ SYSTEM_PROMPT = """
 You are a sales knowledge assistant for Regenesys.
 
 Answer the user's question using ONLY the information
-provided in the retrieved knowledge-base context.
+provided in the retrieved knowledge-base context and
+relevant conversation history.
 
 Rules:
 
 1. Do not invent information.
 2. Do not use outside knowledge.
-3. If the answer is not supported by the context, say:
+3. If the answer is not supported by the knowledge base,
+   say:
    "I couldn't find that information in the knowledge base."
 4. Prefer precise information over assumptions.
-5. Combine multiple sources when relevant.
+5. Combine multiple retrieved sources when relevant.
 6. Preserve distinctions between:
    - programmes
    - schools
@@ -37,214 +39,307 @@ Rules:
 10. When answering programme-list questions, include only
     programmes supported by the retrieved context.
 11. Do not generate source numbers or citation markers.
-    Sources are returned separately by the API.
+12. Conversation history may be used to resolve references
+    such as "it", "its", "that programme", or "the course".
+13. Conversation history must never be treated as factual
+    knowledge. The retrieved knowledge base is the source
+    of truth.
+14. If the resolved subject is clear from the conversation,
+    retrieve information specifically about that subject.
 """.strip()
 
 
-# =============================================================
-# Query classification helpers
-# =============================================================
+def _build_history(
+    conversation_history: list[dict] | None,
+) -> str:
 
-def _is_programme_list_question(
+    if not conversation_history:
+        return ""
+
+    lines = []
+
+    for message in conversation_history:
+
+        role = message.get(
+            "role",
+            "",
+        )
+
+        content = message.get(
+            "content",
+            "",
+        ).strip()
+
+        if not content:
+            continue
+
+        lines.append(
+            f"{role.upper()}: {content}"
+        )
+
+    if not lines:
+        return ""
+
+    return "\n".join(lines)
+
+
+def _resolve_search_query(
     question: str,
-) -> bool:
+    conversation_history: list[dict] | None,
+) -> str:
 
-    q = question.lower()
+    """
+    Resolve conversational references before retrieval.
 
-    list_phrases = (
-        "what programmes",
-        "which programmes",
-        "programmes are available",
-        "programs are available",
-        "what courses",
-        "which courses",
-        "what offerings",
-        "what qualifications",
+    Example:
+
+        Previous:
+            USER: What is the MBA?
+
+        Current:
+            What is its duration?
+
+    Becomes approximately:
+
+        What is the duration of the MBA?
+    """
+
+    if not conversation_history:
+        return question
+
+    history = _build_history(
+        conversation_history
     )
 
-    return any(
-        phrase in q
-        for phrase in list_phrases
-    )
+    if not history:
+        return question
+
+    llm = get_llm()
+
+    prompt = f"""
+Conversation history:
+
+{history}
+
+Current user question:
+
+{question}
+
+Determine the standalone search query needed to retrieve
+the correct information from a knowledge base.
+
+Resolve references such as:
+- it
+- its
+- they
+- their
+- that
+- this
+- that programme
+- this programme
+- the course
+
+Use the conversation history only to resolve what the user
+is referring to.
+
+Do not answer the question.
+
+Return ONLY the rewritten standalone search query.
+
+Example:
+
+Conversation:
+USER: What is the MBA?
+ASSISTANT: The MBA is an NQF Level 9 programme.
+
+Current question:
+What is its duration?
+
+Return:
+What is the duration of the MBA?
+""".strip()
+
+    try:
+
+        resolved = llm.generate(
+            system_prompt=(
+                "You rewrite conversational questions "
+                "into standalone search queries."
+            ),
+            user_prompt=prompt,
+        )
+
+        resolved = resolved.strip()
+
+        if resolved:
+            return resolved
+
+    except Exception as exc:
+
+        print(
+            "QUERY RESOLUTION ERROR:",
+            repr(exc),
+        )
+
+    return question
 
 
-def _contains_programme_identifier(
+def answer_question(
     question: str,
-) -> bool:
+    *,
+    limit: int = 5,
+    category: str | None = None,
+    subcategory: str | None = None,
+    conversation_history: list[dict] | None = None,
+) -> dict:
 
-    q = question.lower()
+    # ---------------------------------------------------------
+    # Validate
+    # ---------------------------------------------------------
 
-    identifiers = (
-        "mba",
-        "bba",
-        "dbm",
-        "pdbm",
-        "hcbm",
-        "pgpm",
-        "pgdm",
-        "bfs",
-        "bcomppe",
-        "bcompt",
-        "pdia",
-        "pdpm",
-        "bpm",
-        "mpm",
-        "ndpa",
-        "adpm",
-        "hcpm",
-        "bitid",
-        "bsc",
-        "hcss",
-        "pdds",
-        "ai for developers",
-        "ai for executives",
-        "ai fluency",
-        "ai agentic",
-        "artificial intelligence",
-        "software developer",
-        "cybersecurity analyst",
-        "data science practitioner",
+    question = question.strip()
+
+    if not question:
+        raise ValueError(
+            "Question cannot be empty."
+        )
+
+    # ---------------------------------------------------------
+    # Resolve conversational references
+    # ---------------------------------------------------------
+
+    search_query = _resolve_search_query(
+        question,
+        conversation_history,
     )
 
-    return any(
-        identifier in q
-        for identifier in identifiers
+    print(
+        "SEARCH QUERY:",
+        search_query,
     )
 
-
-def _filter_relevant_results(
-    question: str,
-    results,
-) -> list:
-
-    if not results:
-        return []
-
     # ---------------------------------------------------------
-    # Broad programme-list questions need multiple documents.
-    # Keep the retrieval ranking intact.
+    # Query understanding
     # ---------------------------------------------------------
 
-    if _is_programme_list_question(question):
-        return results
+    understanding = understand_query(
+        search_query
+    )
+
+    effective_category = (
+        category
+        if category is not None
+        else understanding.category
+    )
+
+    effective_subcategory = (
+        subcategory
+        if subcategory is not None
+        else understanding.subcategory
+    )
 
     # ---------------------------------------------------------
-    # Specific programme questions.
-    #
-    # If the question identifies a programme, keep the
-    # strongest matching document(s) rather than passing
-    # unrelated semantically similar documents to the LLM.
+    # Retrieval
     # ---------------------------------------------------------
 
-    if _contains_programme_identifier(question):
-
-        q = question.lower()
-
-        programme_results = []
-
-        for result in results:
-
-            title = (
-                result.title or ""
-            ).lower()
-
-            content = (
-                result.content or ""
-            ).lower()
-
-            # Strong title match.
-            if any(
-                identifier in title
-                for identifier in (
-                    "mba",
-                    "bba",
-                    "dbm",
-                    "pdbm",
-                    "hcbm",
-                    "pgpm",
-                    "pgdm",
-                    "bfs",
-                    "bcomppe",
-                    "bcompt",
-                    "pdia",
-                    "pdpm",
-                    "bpm",
-                    "mpm",
-                    "ndpa",
-                    "adpm",
-                    "hcpm",
-                    "bitid",
-                    "bsc",
-                    "hcss",
-                    "pdds",
-                )
-                if identifier in q
-            ):
-                programme_results.append(result)
-                continue
-
-            # Full programme-name matches.
-            programme_names = (
-                (
-                    "master of business administration",
-                    "master of business administration",
-                ),
-                (
-                    "bachelor of business administration",
-                    "bachelor of business administration",
-                ),
-                (
-                    "doctor of business management",
-                    "doctor of business management",
-                ),
-                (
-                    "postgraduate diploma in business management",
-                    "postgraduate diploma in business management",
-                ),
-                (
-                    "higher certificate in business management",
-                    "higher certificate in business management",
-                ),
-                (
-                    "postgraduate diploma in project management",
-                    "postgraduate diploma in project management",
-                ),
-                (
-                    "postgraduate diploma in digital marketing",
-                    "postgraduate diploma in digital marketing",
-                ),
-            )
-
-            for query_name, title_name in programme_names:
-
-                if (
-                    query_name in q
-                    and title_name in title
-                ):
-                    programme_results.append(result)
-                    break
-
-        # -----------------------------------------------------
-        # If we found an exact programme document, use only
-        # those documents.
-        # -----------------------------------------------------
-
-        if programme_results:
-            return programme_results
+    results = hybrid_search(
+        understanding.search_query,
+        limit=limit,
+        category=effective_category,
+        subcategory=effective_subcategory,
+    )
 
     # ---------------------------------------------------------
-    # No deterministic programme match.
-    #
-    # Keep the best retrieval result(s), but don't flood the
-    # LLM with the entire candidate set.
+    # Context
     # ---------------------------------------------------------
 
-    return results[: min(len(results), 3)]
+    context = build_context(
+        results
+    )
 
+    if not context:
 
-def _build_sources(
-    results,
-) -> list[dict]:
+        return {
+            "answer": (
+                "I couldn't find that information "
+                "in the knowledge base."
+            ),
+            "sources": [],
+            "results": [],
+        }
+
+    # ---------------------------------------------------------
+    # Conversation history
+    # ---------------------------------------------------------
+
+    history_text = _build_history(
+        conversation_history
+    )
+
+    if history_text:
+
+        history_section = (
+            "\n\nConversation history:\n\n"
+            + history_text
+        )
+
+    else:
+
+        history_section = ""
+
+    # ---------------------------------------------------------
+    # LLM prompt
+    # ---------------------------------------------------------
+
+    user_prompt = f"""
+Retrieved knowledge-base context:
+
+{context}
+
+{history_section}
+
+Current user question:
+
+{question}
+
+Resolved search query:
+
+{search_query}
+
+Answer the current user question using ONLY the
+retrieved knowledge-base context.
+
+Conversation history may be used to understand what
+the user is referring to.
+
+Do not use outside knowledge.
+
+Do not add source numbers, source markers,
+citations, or references such as [Source 1],
+【Source 1】, or (Source 1).
+
+The API provides source documents separately.
+
+If the retrieved context does not contain enough
+information to answer the question, say:
+
+"I couldn't find that information in the knowledge base."
+""".strip()
+
+    # ---------------------------------------------------------
+    # Generate answer
+    # ---------------------------------------------------------
+
+    llm = get_llm()
+
+    answer = llm.generate(
+        system_prompt=SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+    )
+
+    # ---------------------------------------------------------
+    # Sources
+    # ---------------------------------------------------------
 
     sources = []
 
@@ -272,152 +367,12 @@ def _build_sources(
             }
         )
 
-    return sources
-
-
-# =============================================================
-# Main answer function
-# =============================================================
-
-def answer_question(
-    question: str,
-    *,
-    limit: int = 5,
-    category: str | None = None,
-    subcategory: str | None = None,
-) -> dict:
-
     # ---------------------------------------------------------
-    # Validate
-    # ---------------------------------------------------------
-
-    question = question.strip()
-
-    if not question:
-        raise ValueError(
-            "Question cannot be empty."
-        )
-
-    # ---------------------------------------------------------
-    # Understand query
-    # ---------------------------------------------------------
-
-    understanding = understand_query(
-        question
-    )
-
-    # Explicit API filters override automatic filters.
-    effective_category = (
-        category
-        if category is not None
-        else understanding.category
-    )
-
-    effective_subcategory = (
-        subcategory
-        if subcategory is not None
-        else understanding.subcategory
-    )
-
-    # ---------------------------------------------------------
-    # Hybrid retrieval
-    # ---------------------------------------------------------
-
-    results = hybrid_search(
-        understanding.search_query,
-        limit=limit,
-        category=effective_category,
-        subcategory=effective_subcategory,
-    )
-
-    # ---------------------------------------------------------
-    # Relevance filtering
-    # ---------------------------------------------------------
-
-    relevant_results = _filter_relevant_results(
-        question,
-        results,
-    )
-
-    # ---------------------------------------------------------
-    # Build context
-    # ---------------------------------------------------------
-
-    context = build_context(
-        relevant_results
-    )
-
-    # ---------------------------------------------------------
-    # No useful context
-    # ---------------------------------------------------------
-
-    if not context:
-
-        return {
-            "answer": (
-                "I couldn't find that information "
-                "in the knowledge base."
-            ),
-            "sources": [],
-            "results": [],
-        }
-
-    # ---------------------------------------------------------
-    # LLM prompt
-    # ---------------------------------------------------------
-
-    user_prompt = f"""
-Retrieved knowledge-base context:
-
-{context}
-
-User question:
-
-{question}
-
-Answer the question using ONLY the retrieved
-knowledge-base context.
-
-Do not use outside knowledge.
-
-Do not add source numbers, source markers,
-citations, or references such as [Source 1],
-【Source 1】, or (Source 1).
-
-The API will provide source documents
-separately.
-
-If the context does not contain enough information
-to answer the question, say:
-
-"I couldn't find that information in the knowledge base."
-""".strip()
-
-    # ---------------------------------------------------------
-    # Generate answer
-    # ---------------------------------------------------------
-
-    llm = get_llm()
-
-    answer = llm.generate(
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=user_prompt,
-    )
-
-    # ---------------------------------------------------------
-    # Sources should match the context sent to the LLM
-    # ---------------------------------------------------------
-
-    sources = _build_sources(
-        relevant_results
-    )
-
-    # ---------------------------------------------------------
-    # Response
+    # Return
     # ---------------------------------------------------------
 
     return {
         "answer": answer,
         "sources": sources,
-        "results": relevant_results,
+        "results": results,
     }
