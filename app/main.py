@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.rag import router as rag_router
+from app.api.routes.voice import router as voice_router
 
 
 # ============================================================
@@ -36,6 +37,7 @@ app.add_middleware(
 # ============================================================
 
 app.include_router(rag_router)
+app.include_router(voice_router)
 
 
 # ============================================================

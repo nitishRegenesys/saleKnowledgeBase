@@ -663,6 +663,114 @@ button {
   font-size: 12px;
 }
 
+.voice-error {
+  width: min(900px, calc(100% - 64px));
+
+  margin: 0 auto 8px;
+
+  padding: 9px 12px;
+
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+
+  background: #fef2f2;
+  color: #991b1b;
+
+  font-size: 12px;
+}
+
+/* ============================================================
+   Voice
+   ============================================================ */
+
+.chat-input-container .mic-button {
+  width: 44px;
+  min-width: 44px;
+
+  padding: 10px 0;
+
+  font-size: 15px;
+  line-height: 1;
+}
+
+.mic-button-recording {
+  background: #dc2626 !important;
+  animation: mic-pulse 1.2s infinite ease-in-out;
+}
+
+@keyframes mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0
+      rgba(220, 38, 38, 0.5);
+  }
+
+  50% {
+    box-shadow: 0 0 0 6px
+      rgba(220, 38, 38, 0);
+  }
+}
+
+.assistant-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.speak-button {
+  padding: 2px 8px;
+
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+
+  background: #ffffff;
+  color: #374151;
+
+  font-size: 11px;
+  line-height: 1.4;
+
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.speak-button:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.speak-button:disabled {
+  cursor: not-allowed;
+
+  opacity: 0.55;
+}
+
+.streaming-text {
+  white-space: pre-wrap;
+}
+
+.streaming-text::after {
+  content: "▍";
+
+  margin-left: 2px;
+
+  color: #6b7280;
+
+  animation: cursor-blink 1s infinite;
+}
+
+@keyframes cursor-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
 /* ============================================================
    Responsive
    ============================================================ */

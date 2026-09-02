@@ -1,4 +1,9 @@
-function MessageBubble({ role, content }) {
+function MessageBubble({
+  role,
+  content,
+  onSpeak,
+  speaking = false,
+}) {
   const isUser = role === "user";
 
   return (
@@ -17,6 +22,22 @@ function MessageBubble({ role, content }) {
         {!isUser && (
           <div className="assistant-label">
             RegAIcademy AI
+
+            {typeof onSpeak === "function" && (
+              <button
+                type="button"
+                className="speak-button"
+                onClick={() => onSpeak(content)}
+                disabled={speaking}
+                title={
+                  speaking
+                    ? "Playing..."
+                    : "Play answer aloud"
+                }
+              >
+                {speaking ? "..." : "🔊"}
+              </button>
+            )}
           </div>
         )}
 

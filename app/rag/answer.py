@@ -1,3 +1,6 @@
+import asyncio
+import re
+
 from app.llm.factory import get_llm
 from app.rag.context import build_context
 from app.retrieval.hybrid import hybrid_search
@@ -498,4 +501,391 @@ information to answer the question, say:
         "answer": answer,
         "sources": sources,
         "results": results,
+    }
+
+
+# ============================================================
+# Streaming answer (usable by the voice pipeline)
+# ============================================================
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+MAX_TTS_CHUNK = 180
+
+
+def _build_sources(
+    results,
+    understanding,
+) -> list[dict]:
+    """Build the source list the same way `answer_question` does."""
+
+    sources = []
+
+    seen = set()
+
+    for result in results:
+
+        if understanding.entity:
+
+            entity = understanding.entity.lower()
+
+            title = (
+                result.title or ""
+            ).lower()
+
+            entity_matches = (
+                entity in title
+                or (
+                    entity == "mba"
+                    and "master of business administration" in title
+                )
+                or (
+                    entity == "bba"
+                    and "bachelor of business administration" in title
+                )
+                or (
+                    entity == "dbm"
+                    and "doctor of business management" in title
+                )
+            )
+
+            if (
+                understanding.intent
+                in {
+                    "duration_lookup",
+                    "fee_lookup",
+                    "eligibility_lookup",
+                    "fact_lookup",
+                }
+                and not entity_matches
+            ):
+                continue
+
+        key = (
+            result.document_id,
+            result.source_url,
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        sources.append(
+            {
+                "document_id": result.document_id,
+                "title": result.title,
+                "url": result.source_url,
+                "category": result.category,
+                "subcategory": result.subcategory,
+            }
+        )
+
+    return sources
+
+
+def _prepare_answer(
+    question: str,
+    limit: int,
+    category: str | None,
+    subcategory: str | None,
+    conversation_history: list[dict] | None,
+) -> dict:
+    """Run the (blocking) retrieval/context preamble once."""
+
+    question = question.strip()
+
+    if not question:
+        raise ValueError(
+            "Question cannot be empty."
+        )
+
+    search_query = _resolve_search_query(
+        question,
+        conversation_history,
+    )
+
+    print(
+        "SEARCH QUERY:",
+        search_query,
+    )
+
+    understanding = understand_query(
+        search_query
+    )
+
+    effective_category = (
+        category
+        if category is not None
+        else understanding.category
+    )
+
+    effective_subcategory = (
+        subcategory
+        if subcategory is not None
+        else understanding.subcategory
+    )
+
+    results = hybrid_search(
+        understanding.search_query,
+        limit=limit,
+        entity=understanding.entity,
+        category=effective_category,
+        subcategory=effective_subcategory,
+    )
+
+    context = build_context(
+        results
+    )
+
+    history_text = _build_history(
+        conversation_history
+    )
+
+    history_section = ""
+
+    if history_text:
+
+        history_section = (
+            "\n\nConversation history:\n\n"
+            + history_text
+        )
+
+    return {
+        "user_prompt": "",
+        "context": context,
+        "results": results,
+        "understanding": understanding,
+        "history_section": history_section,
+        "search_query": search_query,
+        "question": question,
+    }
+
+
+def _take_complete_sentences(
+    pending: str,
+    max_len: int = MAX_TTS_CHUNK,
+) -> tuple[list[str], str]:
+    """Split a streaming accumulator into (ready, leftover)."""
+
+    parts = _SENTENCE_SPLIT.split(
+        pending
+    )
+
+    ready = parts[:-1]
+    leftover = parts[-1]
+
+    # If the trailing chunk grew past the TTS comfort size without
+    # finding a sentence boundary, spill the overflow so speech
+    # never waits on a very long run-on.
+    if len(leftover) > max_len:
+
+        ready.append(
+            leftover[:max_len]
+        )
+
+        leftover = leftover[max_len:]
+
+    return ready, leftover
+
+
+def _final_chunk_for_tts(
+    text: str,
+    max_len: int = MAX_TTS_CHUNK,
+) -> list[str]:
+    """Split the final leftover text into speakable chunks."""
+
+    text = (
+        text.replace("\r", "") or ""
+    ).strip()
+
+    if not text:
+        return []
+
+    chunks = []
+
+    buffer = ""
+
+    for part in _SENTENCE_SPLIT.split(text):
+
+        part = part.strip()
+
+        if not part:
+            continue
+
+        while len(part) > max_len:
+
+            if buffer:
+                chunks.append(buffer)
+                buffer = ""
+
+            chunks.append(
+                part[:max_len]
+            )
+
+            part = part[max_len:]
+
+        candidate = (
+            f"{buffer} {part}".strip()
+            if buffer
+            else part
+        )
+
+        if len(candidate) > max_len:
+
+            chunks.append(buffer)
+            buffer = part
+
+        else:
+
+            buffer = candidate
+
+    if buffer:
+        chunks.append(buffer)
+
+    return [
+        chunk
+        for chunk in chunks
+        if chunk.strip()
+    ]
+
+
+async def answer_question_stream(
+    question: str,
+    *,
+    limit: int = 5,
+    category: str | None = None,
+    subcategory: str | None = None,
+    conversation_history: list[dict] | None = None,
+):
+    """Async generator of streaming answer events.
+
+    Yields:
+        {"type": "delta", "text": <sentence-text>}
+        {"type": "done", "answer": <full-text>, "sources": [...]}
+    """
+
+    prep = await asyncio.to_thread(
+        _prepare_answer,
+        question,
+        limit,
+        category,
+        subcategory,
+        conversation_history,
+    )
+
+    if not prep["context"]:
+
+        yield {
+            "type": "done",
+            "answer": (
+                "I couldn't find that information "
+                "in the knowledge base."
+            ),
+            "sources": [],
+        }
+
+        return
+
+    user_prompt = f"""
+Retrieved knowledge-base context:
+
+{prep["context"]}
+
+{prep["history_section"]}
+
+Current user question:
+
+{prep["question"]}
+
+Resolved search query:
+
+{prep["search_query"]}
+
+Answer the current question using ONLY the
+retrieved knowledge-base context.
+
+Conversation history may be used only to understand
+what the user is referring to.
+
+Do not use outside knowledge.
+
+Do not add source numbers, source markers,
+citations, or references.
+
+The API provides source documents separately.
+
+If the retrieved context does not contain enough
+information to answer the question, say:
+
+"I couldn't find that information in the knowledge base."
+""".strip()
+
+    llm = get_llm()
+
+    full_answer = ""
+
+    pending = ""
+
+    try:
+
+        async for delta in llm.stream(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+        ):
+
+            if not delta:
+                continue
+
+            full_answer += delta
+            pending += delta
+
+            ready, pending = (
+                _take_complete_sentences(
+                    pending
+                )
+            )
+
+            for piece in ready:
+
+                piece = piece.strip()
+
+                if piece:
+
+                    yield {
+                        "type": "delta",
+                        "text": piece,
+                    }
+
+    finally:
+
+        for piece in _final_chunk_for_tts(
+            pending
+        ):
+
+            yield {
+                "type": "delta",
+                "text": piece,
+            }
+
+    sources = _build_sources(
+        prep["results"],
+        prep["understanding"],
+    )
+
+    answer = full_answer.strip()
+
+    if not answer:
+
+        answer = (
+            "I couldn't find that information "
+            "in the knowledge base."
+        )
+
+        sources = []
+
+    yield {
+        "type": "done",
+        "answer": answer,
+        "sources": sources,
     }
