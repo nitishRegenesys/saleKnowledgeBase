@@ -1,5 +1,27 @@
 const API_BASE_URL = "http://localhost:8000";
 
+
+async function handleResponse(response) {
+  if (!response.ok) {
+    let errorMessage = "Something went wrong.";
+
+    try {
+      const errorData = await response.json();
+
+      if (errorData?.detail) {
+        errorMessage = errorData.detail;
+      }
+    } catch {
+      // Use default error
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+}
+
+
 export async function sendChatMessage({
   sessionId = null,
   message,
@@ -24,21 +46,27 @@ export async function sendChatMessage({
     }
   );
 
-  if (!response.ok) {
-    let errorMessage = "Unable to process your message.";
+  return handleResponse(response);
+}
 
-    try {
-      const errorData = await response.json();
 
-      if (errorData?.detail) {
-        errorMessage = errorData.detail;
-      }
-    } catch {
-      // Keep default error message
-    }
+export async function getSessions() {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/rag/sessions`
+  );
 
-    throw new Error(errorMessage);
-  }
+  const data = await handleResponse(response);
 
-  return response.json();
+  return data.sessions || [];
+}
+
+
+export async function getConversation(
+  sessionId
+) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/rag/sessions/${sessionId}`
+  );
+
+  return handleResponse(response);
 }

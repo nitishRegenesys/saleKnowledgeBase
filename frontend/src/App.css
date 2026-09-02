@@ -722,3 +722,66 @@ button {
     width: 94%;
   }
 }
+/* ============================================================
+   Conversation list
+   ============================================================ */
+
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  max-height: calc(100vh - 260px);
+
+  overflow-y: auto;
+}
+
+.session-item {
+  width: 100%;
+
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  padding: 10px;
+
+  border: none;
+  border-radius: 9px;
+
+  background: transparent;
+  color: #ffffff;
+
+  text-align: left;
+
+  transition:
+    background 0.2s ease;
+}
+
+.session-item:hover {
+  background: #1f2937;
+}
+
+.session-item-active {
+  background: #1f2937;
+}
+
+.session-details {
+  min-width: 0;
+  flex: 1;
+}
+
+.session-title {
+  overflow: hidden;
+
+  color: #e5e7eb;
+
+  font-size: 12px;
+  font-weight: 600;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item-active .session-title {
+  color: #ffffff;
+}

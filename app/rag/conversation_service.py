@@ -100,6 +100,81 @@ def get_messages(
         db.close()
 
 
+def list_sessions(
+    limit: int = 50,
+) -> list[dict]:
+    """
+    Load recent conversation sessions.
+
+    Each session includes:
+    - session_id
+    - created_at
+    - updated_at
+    - title
+    """
+
+    db = SessionLocal()
+
+    try:
+        conversations = list(
+            db.execute(
+                select(Conversation)
+                .order_by(
+                    Conversation.updated_at.desc()
+                )
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+        sessions = []
+
+        for conversation in conversations:
+
+            first_user_message = db.execute(
+                select(Message)
+                .where(
+                    Message.conversation_id
+                    == conversation.id,
+                    Message.role == "user",
+                )
+                .order_by(
+                    Message.created_at.asc(),
+                    Message.id.asc(),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if first_user_message:
+                title = first_user_message.content.strip()
+
+                if len(title) > 45:
+                    title = title[:45].rstrip() + "..."
+            else:
+                title = "New conversation"
+
+            sessions.append(
+                {
+                    "session_id": str(
+                        conversation.id
+                    ),
+                    "title": title,
+                    "created_at": (
+                        conversation.created_at.isoformat()
+                    ),
+                    "updated_at": (
+                        conversation.updated_at.isoformat()
+                    ),
+                }
+            )
+
+        return sessions
+
+    finally:
+        db.close()
+
+
 def add_message(
     session_id: str,
     role: str,

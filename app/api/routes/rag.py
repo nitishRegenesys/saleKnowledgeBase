@@ -7,8 +7,8 @@ from app.rag.conversation_service import (
     create_session,
     get_messages,
     session_exists,
+    list_sessions,
 )
-
 
 router = APIRouter(
     prefix="/api/v1/rag",
@@ -85,6 +85,29 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceResponse]
 
+class SessionResponse(BaseModel):
+
+    session_id: str
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class SessionListResponse(BaseModel):
+
+    sessions: list[SessionResponse]
+
+
+class ConversationMessageResponse(BaseModel):
+    role: str
+    content: str
+    created_at: str
+
+
+class ConversationResponse(BaseModel):
+    session_id: str
+    messages: list[ConversationMessageResponse]
+
 
 # ============================================================
 # ASK
@@ -144,6 +167,111 @@ def ask_question(
         ],
     )
 
+# ============================================================
+# SESSIONS
+# ============================================================
+
+
+@router.get(
+    "/sessions",
+    response_model=SessionListResponse,
+)
+def get_sessions() -> SessionListResponse:
+
+    try:
+
+        sessions = list_sessions()
+
+    except Exception as exc:
+
+        print(
+            "SESSION LIST ERROR:",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to load "
+                "conversation sessions."
+            ),
+        ) from exc
+
+    return SessionListResponse(
+        sessions=[
+            SessionResponse(
+                session_id=session["session_id"],
+                title=session["title"],
+                created_at=session["created_at"],
+                updated_at=session["updated_at"],
+            )
+            for session in sessions
+        ]
+    )
+
+# ============================================================
+# GET CONVERSATION
+# ============================================================
+
+
+@router.get(
+    "/sessions/{session_id}",
+    response_model=ConversationResponse,
+)
+def get_conversation(
+    session_id: str,
+) -> ConversationResponse:
+
+    # ---------------------------------------------------------
+    # Validate session
+    # ---------------------------------------------------------
+
+    if not session_exists(session_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation session not found.",
+        )
+
+    # ---------------------------------------------------------
+    # Load messages
+    # ---------------------------------------------------------
+
+    try:
+
+        messages = get_messages(
+            session_id
+        )
+
+    except Exception as exc:
+
+        print(
+            "CONVERSATION LOAD ERROR:",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to load "
+                "conversation."
+            ),
+        ) from exc
+
+    # ---------------------------------------------------------
+    # Response
+    # ---------------------------------------------------------
+
+    return ConversationResponse(
+        session_id=session_id,
+        messages=[
+            ConversationMessageResponse(
+                role=message.role,
+                content=message.content,
+                created_at=message.created_at.isoformat(),
+            )
+            for message in messages
+        ],
+    )
 
 # ============================================================
 # CHAT
