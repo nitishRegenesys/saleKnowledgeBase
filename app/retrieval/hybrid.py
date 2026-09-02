@@ -26,6 +26,25 @@ class RetrievedChunk:
     hybrid_score: float
 
 
+# =============================================================
+# Known programme entities
+# =============================================================
+
+PROGRAMME_ENTITIES = {
+    "mba",
+    "bba",
+    "dbm",
+    "pdbm",
+    "hcbm",
+    "pgpm",
+    "pgdm",
+    "pdds",
+    "bsc",
+    "bitid",
+    "hcss",
+}
+
+
 def hybrid_search(
     query: str,
     *,
@@ -33,29 +52,30 @@ def hybrid_search(
     vector_weight: float = 0.55,
     keyword_weight: float = 0.25,
     metadata_weight: float = 0.20,
+    entity: str | None = None,
     category: str | None = None,
     subcategory: str | None = None,
 ) -> list[RetrievedChunk]:
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Validate query
-    # ---------------------------------------------------------
+    # =========================================================
 
     query = query.strip()
 
     if not query:
         return []
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Validate limit
-    # ---------------------------------------------------------
+    # =========================================================
 
     if limit <= 0:
         return []
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Validate weights
-    # ---------------------------------------------------------
+    # =========================================================
 
     if (
         vector_weight < 0
@@ -77,25 +97,50 @@ def hybrid_search(
             "At least one search weight must be greater than zero."
         )
 
+    # Normalize weights.
     vector_weight /= total_weight
     keyword_weight /= total_weight
     metadata_weight /= total_weight
 
-    # ---------------------------------------------------------
-    # Create embedding
-    # ---------------------------------------------------------
+    # =========================================================
+    # Normalize entity
+    # =========================================================
+
+    normalized_entity = (
+        entity.strip().lower()
+        if entity
+        else None
+    )
+
+    # Only programme entities become hard retrieval constraints.
+    #
+    # Examples:
+    #
+    #   entity="MBA"            -> constrained retrieval
+    #   entity="BBA"            -> constrained retrieval
+    #   entity="business school" -> broad retrieval
+    #
+    programme_entity = (
+        normalized_entity
+        if normalized_entity in PROGRAMME_ENTITIES
+        else None
+    )
+
+    # =========================================================
+    # Create query embedding
+    # =========================================================
 
     query_embedding = embed_text(query)
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Database schema
-    # ---------------------------------------------------------
+    # =========================================================
 
     schema = settings.db_schema
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Retrieval SQL
-    # ---------------------------------------------------------
+    # =========================================================
 
     sql = text(
         f"""
@@ -122,16 +167,50 @@ def hybrid_search(
                 ON d.id = c.document_id
 
             WHERE
+
+                -- -------------------------------------------------
+                -- Category filter
+                -- -------------------------------------------------
+
                 (
                     CAST(:category AS TEXT) IS NULL
-                    OR d.category = CAST(:category AS TEXT)
+                    OR d.category =
+                        CAST(:category AS TEXT)
                 )
 
                 AND
 
+                -- -------------------------------------------------
+                -- Subcategory filter
+                -- -------------------------------------------------
+
                 (
                     CAST(:subcategory AS TEXT) IS NULL
-                    OR d.subcategory = CAST(:subcategory AS TEXT)
+                    OR d.subcategory =
+                        CAST(:subcategory AS TEXT)
+                )
+
+                AND
+
+                -- -------------------------------------------------
+                -- Programme entity constraint
+                --
+                -- Only active when entity is a known programme.
+                -- -------------------------------------------------
+
+                (
+                    CAST(:programme_entity AS TEXT) IS NULL
+
+                    OR
+
+                    (
+                        lower(d.title) LIKE
+                            '%' ||
+                            lower(
+                                CAST(:programme_entity AS TEXT)
+                            ) ||
+                            '%'
+                    )
                 )
 
             ORDER BY
@@ -160,6 +239,7 @@ def hybrid_search(
                 ON d.id = c.document_id
 
             WHERE
+
                 c.search_vector @@
                 websearch_to_tsquery(
                     'english',
@@ -168,16 +248,47 @@ def hybrid_search(
 
                 AND
 
+                -- -------------------------------------------------
+                -- Category filter
+                -- -------------------------------------------------
+
                 (
                     CAST(:category AS TEXT) IS NULL
-                    OR d.category = CAST(:category AS TEXT)
+                    OR d.category =
+                        CAST(:category AS TEXT)
                 )
 
                 AND
 
+                -- -------------------------------------------------
+                -- Subcategory filter
+                -- -------------------------------------------------
+
                 (
                     CAST(:subcategory AS TEXT) IS NULL
-                    OR d.subcategory = CAST(:subcategory AS TEXT)
+                    OR d.subcategory =
+                        CAST(:subcategory AS TEXT)
+                )
+
+                AND
+
+                -- -------------------------------------------------
+                -- Programme entity constraint
+                -- -------------------------------------------------
+
+                (
+                    CAST(:programme_entity AS TEXT) IS NULL
+
+                    OR
+
+                    (
+                        lower(d.title) LIKE
+                            '%' ||
+                            lower(
+                                CAST(:programme_entity AS TEXT)
+                            ) ||
+                            '%'
+                    )
                 )
 
             ORDER BY
@@ -220,25 +331,98 @@ def hybrid_search(
                 ) AS keyword_score,
 
                 (
-                    -- -------------------------------------------------
-                    -- Programme/title relevance
-                    -- -------------------------------------------------
+                    -- =================================================
+                    -- Entity relevance
+                    -- =================================================
 
                     CASE
 
-                        -- Exact title = strongest signal
+                        -- -------------------------------------------------
+                        -- Exact entity title
+                        -- -------------------------------------------------
+
+                        WHEN
+                            CAST(:entity AS TEXT) IS NOT NULL
+                            AND lower(trim(d.title))
+                                = lower(
+                                    trim(
+                                        CAST(:entity AS TEXT)
+                                    )
+                                )
+                        THEN 1.00
+
+                        -- -------------------------------------------------
+                        -- Known programme abbreviation
+                        -- -------------------------------------------------
+
+                        WHEN
+                            CAST(:programme_entity AS TEXT) IS NOT NULL
+                            AND lower(d.title) LIKE
+                                '%' ||
+                                lower(
+                                    CAST(:programme_entity AS TEXT)
+                                ) ||
+                                '%'
+                        THEN 1.00
+
+                        -- -------------------------------------------------
+                        -- Full programme names
+                        -- -------------------------------------------------
+
+                        WHEN
+                            CAST(:entity AS TEXT) IS NOT NULL
+                            AND lower(
+                                CAST(:entity AS TEXT)
+                            )
+                                = 'master of business administration'
+                            AND lower(d.title)
+                                LIKE '%master of business administration%'
+                        THEN 1.00
+
+                        WHEN
+                            CAST(:entity AS TEXT) IS NOT NULL
+                            AND lower(
+                                CAST(:entity AS TEXT)
+                            )
+                                = 'bachelor of business administration'
+                            AND lower(d.title)
+                                LIKE '%bachelor of business administration%'
+                        THEN 1.00
+
+                        WHEN
+                            CAST(:entity AS TEXT) IS NOT NULL
+                            AND lower(
+                                CAST(:entity AS TEXT)
+                            )
+                                = 'doctor of business management'
+                            AND lower(d.title)
+                                LIKE '%doctor of business management%'
+                        THEN 1.00
+
+                        ELSE 0.0
+
+                    END
+
+                    +
+
+                    -- =================================================
+                    -- Query/title relevance
+                    -- =================================================
+
+                    CASE
+
                         WHEN
                             lower(trim(d.title))
                             = lower(trim(:query))
                         THEN 1.00
 
-                        -- Entire query appears in title
                         WHEN
                             lower(d.title)
-                            LIKE '%' || lower(:query) || '%'
+                            LIKE '%' ||
+                            lower(:query) ||
+                            '%'
                         THEN 0.90
 
-                        -- Important programme abbreviations
                         WHEN
                             lower(d.title) LIKE '%mba%'
                             AND lower(:query) LIKE '%mba%'
@@ -274,26 +458,25 @@ def hybrid_search(
                             AND lower(:query) LIKE '%pgdm%'
                         THEN 0.85
 
-                        -- Query contains the programme name
                         WHEN
                             lower(:query)
-                            LIKE '%master of business administration%'
+                                LIKE '%master of business administration%'
                             AND lower(d.title)
-                            LIKE '%master of business administration%'
+                                LIKE '%master of business administration%'
                         THEN 0.85
 
                         WHEN
                             lower(:query)
-                            LIKE '%bachelor of business administration%'
+                                LIKE '%bachelor of business administration%'
                             AND lower(d.title)
-                            LIKE '%bachelor of business administration%'
+                                LIKE '%bachelor of business administration%'
                         THEN 0.85
 
                         WHEN
                             lower(:query)
-                            LIKE '%doctor of business management%'
+                                LIKE '%doctor of business management%'
                             AND lower(d.title)
-                            LIKE '%doctor of business management%'
+                                LIKE '%doctor of business management%'
                         THEN 0.85
 
                         ELSE 0.0
@@ -302,9 +485,9 @@ def hybrid_search(
 
                     +
 
-                    -- -------------------------------------------------
+                    -- =================================================
                     -- Category relevance
-                    -- -------------------------------------------------
+                    -- =================================================
 
                     CASE
 
@@ -320,9 +503,9 @@ def hybrid_search(
 
                     +
 
-                    -- -------------------------------------------------
+                    -- =================================================
                     -- Subcategory relevance
-                    -- -------------------------------------------------
+                    -- =================================================
 
                     CASE
 
@@ -338,24 +521,32 @@ def hybrid_search(
 
                     +
 
-                    -- -------------------------------------------------
+                    -- =================================================
                     -- Information-type relevance
-                    -- -------------------------------------------------
+                    -- =================================================
 
                     CASE
 
-                        -- NQF question
+                        -- -------------------------------------------------
+                        -- NQF
+                        -- -------------------------------------------------
+
                         WHEN
                             (
                                 lower(:query) LIKE '%nqf%'
-                                OR lower(:query) LIKE '%qualification level%'
-                                OR lower(:query) LIKE '%level%'
+                                OR lower(:query)
+                                    LIKE '%qualification level%'
+                                OR lower(:query)
+                                    LIKE '%level%'
                             )
                             AND
                             lower(c.content) LIKE '%nqf%'
                         THEN 0.35
 
-                        -- Fee question
+                        -- -------------------------------------------------
+                        -- Fees
+                        -- -------------------------------------------------
+
                         WHEN
                             (
                                 lower(:query) LIKE '%fee%'
@@ -373,32 +564,66 @@ def hybrid_search(
                             )
                         THEN 0.35
 
-                        -- Eligibility question
+                        -- -------------------------------------------------
+                        -- Eligibility
+                        -- -------------------------------------------------
+
                         WHEN
                             (
                                 lower(:query) LIKE '%eligib%'
                                 OR lower(:query) LIKE '%admission%'
-                                OR lower(:query) LIKE '%entry requirement%'
+                                OR lower(:query)
+                                    LIKE '%entry requirement%'
+                                OR lower(:query)
+                                    LIKE '%requirement%'
                             )
                             AND
                             (
-                                lower(c.content) LIKE '%eligibility%'
-                                OR lower(c.content) LIKE '%requirement%'
+                                lower(c.content)
+                                    LIKE '%eligibility%'
+                                OR lower(c.content)
+                                    LIKE '%requirement%'
                             )
                         THEN 0.35
 
-                        -- Duration question
+                        -- -------------------------------------------------
+                        -- Duration
+                        -- -------------------------------------------------
+
                         WHEN
                             (
-                                lower(:query) LIKE '%duration%'
-                                OR lower(:query) LIKE '%how long%'
+                                lower(:query)
+                                    LIKE '%duration%'
+                                OR lower(:query)
+                                    LIKE '%how long%'
+                                OR lower(:query)
+                                    LIKE '%length%'
                             )
                             AND
                             (
-                                lower(c.content) LIKE '%duration%'
-                                OR lower(c.content) LIKE '%year%'
-                                OR lower(c.content) LIKE '%month%'
+                                lower(c.content)
+                                    LIKE '%duration%'
+                                OR lower(c.content)
+                                    LIKE '%year%'
+                                OR lower(c.content)
+                                    LIKE '%month%'
                             )
+                        THEN 0.35
+
+                        -- -------------------------------------------------
+                        -- Credits
+                        -- -------------------------------------------------
+
+                        WHEN
+                            (
+                                lower(:query)
+                                    LIKE '%credit%'
+                                OR lower(:query)
+                                    LIKE '%credits%'
+                            )
+                            AND
+                            lower(c.content)
+                                LIKE '%credit%'
                         THEN 0.35
 
                         ELSE 0.0
@@ -489,9 +714,9 @@ def hybrid_search(
         """
     )
 
-    # ---------------------------------------------------------
-    # Execute query
-    # ---------------------------------------------------------
+    # =========================================================
+    # Execute
+    # =========================================================
 
     with engine.connect() as conn:
 
@@ -503,6 +728,10 @@ def hybrid_search(
                 ),
 
                 "query": query,
+
+                "entity": normalized_entity,
+
+                "programme_entity": programme_entity,
 
                 "category": category,
 
@@ -523,9 +752,9 @@ def hybrid_search(
             },
         ).mappings().all()
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Convert rows
-    # ---------------------------------------------------------
+    # =========================================================
 
     return [
         RetrievedChunk(

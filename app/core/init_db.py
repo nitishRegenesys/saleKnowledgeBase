@@ -2,7 +2,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import Base, engine
-from app.models import Document, DocumentChunk
+from app.models import (Document, DocumentChunk,Conversation, Message)
 
 
 def init_db():

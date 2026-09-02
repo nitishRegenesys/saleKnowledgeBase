@@ -44,9 +44,22 @@ Rules:
 13. Conversation history must never be treated as factual
     knowledge. The retrieved knowledge base is the source
     of truth.
-14. If the resolved subject is clear from the conversation,
-    retrieve information specifically about that subject.
 """.strip()
+
+
+KNOWN_PROGRAMMES = {
+    "mba": "MBA",
+    "bba": "BBA",
+    "dbm": "DBM",
+    "pdbm": "PDBM",
+    "hcbm": "HCBM",
+    "pgpm": "PGPM",
+    "pgdm": "PGDM",
+    "pdds": "PDDS",
+    "bsc": "BSC",
+    "bitid": "BITID",
+    "hcss": "HCSS",
+}
 
 
 def _build_history(
@@ -77,10 +90,32 @@ def _build_history(
             f"{role.upper()}: {content}"
         )
 
-    if not lines:
-        return ""
-
     return "\n".join(lines)
+
+
+def _find_programme_in_history(
+    conversation_history: list[dict] | None,
+) -> str | None:
+
+    if not conversation_history:
+        return None
+
+    # Search recent messages first.
+    for message in reversed(
+        conversation_history
+    ):
+
+        content = message.get(
+            "content",
+            "",
+        ).lower()
+
+        for key, programme in KNOWN_PROGRAMMES.items():
+
+            if key in content:
+                return programme
+
+    return None
 
 
 def _resolve_search_query(
@@ -89,19 +124,20 @@ def _resolve_search_query(
 ) -> str:
 
     """
-    Resolve conversational references before retrieval.
+    Resolve simple conversational references.
 
-    Example:
+    Examples:
 
-        Previous:
-            USER: What is the MBA?
+        What is the MBA?
+        What is its duration?
 
-        Current:
-            What is its duration?
-
-    Becomes approximately:
+    becomes:
 
         What is the duration of the MBA?
+
+    We first use deterministic programme detection.
+    LLM resolution is only used when no programme can
+    be identified from the recent conversation.
     """
 
     if not conversation_history:
@@ -114,6 +150,77 @@ def _resolve_search_query(
     if not history:
         return question
 
+    programme = _find_programme_in_history(
+        conversation_history
+    )
+
+    if programme:
+
+        normalized = " ".join(
+            question.lower().split()
+        )
+
+        reference_words = [
+            "it",
+            "its",
+            "they",
+            "their",
+            "this",
+            "that",
+            "this programme",
+            "that programme",
+            "the programme",
+            "this course",
+            "that course",
+            "the course",
+        ]
+
+        has_reference = any(
+            word in normalized
+            for word in reference_words
+        )
+
+        if has_reference:
+
+            resolved = question
+
+            replacements = {
+                "its": f"the {programme}'s",
+                "it": f"the {programme}",
+                "their": f"the {programme}'s",
+                "they": f"the {programme}",
+                "this programme": f"the {programme}",
+                "that programme": f"the {programme}",
+                "the programme": f"the {programme}",
+                "this course": f"the {programme}",
+                "that course": f"the {programme}",
+                "the course": f"the {programme}",
+                "this": f"the {programme}",
+                "that": f"the {programme}",
+            }
+
+            # Longest phrases first.
+            for old, new in sorted(
+                replacements.items(),
+                key=lambda item: len(item[0]),
+                reverse=True,
+            ):
+
+                if old in normalized:
+
+                    resolved = normalized.replace(
+                        old,
+                        new,
+                    )
+
+                    break
+
+            return resolved
+
+    # ---------------------------------------------------------
+    # Fallback LLM resolution
+    # ---------------------------------------------------------
+
     llm = get_llm()
 
     prompt = f"""
@@ -125,38 +232,26 @@ Current user question:
 
 {question}
 
-Determine the standalone search query needed to retrieve
-the correct information from a knowledge base.
+Rewrite the current question as a standalone
+knowledge-base search query.
 
-Resolve references such as:
+Resolve conversational references such as:
 - it
 - its
 - they
 - their
-- that
 - this
-- that programme
+- that
 - this programme
+- that programme
 - the course
 
-Use the conversation history only to resolve what the user
-is referring to.
+Use conversation history only to determine what
+the user is referring to.
 
 Do not answer the question.
 
-Return ONLY the rewritten standalone search query.
-
-Example:
-
-Conversation:
-USER: What is the MBA?
-ASSISTANT: The MBA is an NQF Level 9 programme.
-
-Current question:
-What is its duration?
-
-Return:
-What is the duration of the MBA?
+Return ONLY the rewritten search query.
 """.strip()
 
     try:
@@ -193,10 +288,6 @@ def answer_question(
     conversation_history: list[dict] | None = None,
 ) -> dict:
 
-    # ---------------------------------------------------------
-    # Validate
-    # ---------------------------------------------------------
-
     question = question.strip()
 
     if not question:
@@ -205,7 +296,7 @@ def answer_question(
         )
 
     # ---------------------------------------------------------
-    # Resolve conversational references
+    # Resolve conversation
     # ---------------------------------------------------------
 
     search_query = _resolve_search_query(
@@ -219,7 +310,7 @@ def answer_question(
     )
 
     # ---------------------------------------------------------
-    # Query understanding
+    # Understand query
     # ---------------------------------------------------------
 
     understanding = understand_query(
@@ -239,12 +330,13 @@ def answer_question(
     )
 
     # ---------------------------------------------------------
-    # Retrieval
+    # Retrieve
     # ---------------------------------------------------------
 
     results = hybrid_search(
         understanding.search_query,
         limit=limit,
+        entity=understanding.entity,
         category=effective_category,
         subcategory=effective_subcategory,
     )
@@ -269,12 +361,14 @@ def answer_question(
         }
 
     # ---------------------------------------------------------
-    # Conversation history
+    # History
     # ---------------------------------------------------------
 
     history_text = _build_history(
         conversation_history
     )
+
+    history_section = ""
 
     if history_text:
 
@@ -283,12 +377,8 @@ def answer_question(
             + history_text
         )
 
-    else:
-
-        history_section = ""
-
     # ---------------------------------------------------------
-    # LLM prompt
+    # Prompt
     # ---------------------------------------------------------
 
     user_prompt = f"""
@@ -306,17 +396,16 @@ Resolved search query:
 
 {search_query}
 
-Answer the current user question using ONLY the
+Answer the current question using ONLY the
 retrieved knowledge-base context.
 
-Conversation history may be used to understand what
-the user is referring to.
+Conversation history may be used only to understand
+what the user is referring to.
 
 Do not use outside knowledge.
 
 Do not add source numbers, source markers,
-citations, or references such as [Source 1],
-【Source 1】, or (Source 1).
+citations, or references.
 
 The API provides source documents separately.
 
@@ -327,7 +416,7 @@ information to answer the question, say:
 """.strip()
 
     # ---------------------------------------------------------
-    # Generate answer
+    # Generate
     # ---------------------------------------------------------
 
     llm = get_llm()
@@ -346,6 +435,44 @@ information to answer the question, say:
     seen = set()
 
     for result in results:
+
+        # For programme-specific fact questions,
+        # prefer documents whose title matches the
+        # resolved entity.
+        if understanding.entity:
+            entity = understanding.entity.lower()
+
+            title = (
+                result.title or ""
+            ).lower()
+
+            entity_matches = (
+                entity in title
+                or (
+                    entity == "mba"
+                    and "master of business administration" in title
+                )
+                or (
+                    entity == "bba"
+                    and "bachelor of business administration" in title
+                )
+                or (
+                    entity == "dbm"
+                    and "doctor of business management" in title
+                )
+            )
+
+            if (
+                understanding.intent
+                in {
+                    "duration_lookup",
+                    "fee_lookup",
+                    "eligibility_lookup",
+                    "fact_lookup",
+                }
+                and not entity_matches
+            ):
+                continue
 
         key = (
             result.document_id,
@@ -366,10 +493,6 @@ information to answer the question, say:
                 "subcategory": result.subcategory,
             }
         )
-
-    # ---------------------------------------------------------
-    # Return
-    # ---------------------------------------------------------
 
     return {
         "answer": answer,

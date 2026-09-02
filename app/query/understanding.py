@@ -15,6 +15,39 @@ class QueryUnderstanding:
     subcategory: str | None = None
 
 
+KNOWN_PROGRAMMES = {
+    "mba": "MBA",
+    "bba": "BBA",
+    "dbm": "DBM",
+    "pdbm": "PDBM",
+    "hcbm": "HCBM",
+    "pgpm": "PGPM",
+    "pgdm": "PGDM",
+    "pdds": "PDDS",
+    "bsc": "BSC",
+    "bitid": "BITID",
+    "hcss": "HCSS",
+}
+
+
+def _detect_entity(
+    normalized: str,
+) -> str | None:
+
+    for key, value in KNOWN_PROGRAMMES.items():
+
+        if key in normalized:
+            return value
+
+    if "business school" in normalized:
+        return "business school"
+
+    if "school of ai" in normalized:
+        return "school of ai"
+
+    return None
+
+
 def understand_query(
     question: str,
 ) -> QueryUnderstanding:
@@ -30,12 +63,16 @@ def understand_query(
         question.lower().split()
     )
 
+    entity = _detect_entity(
+        normalized
+    )
+
     # ---------------------------------------------------------
     # Business School programme list
     # ---------------------------------------------------------
 
     if (
-        "business school" in normalized
+        entity == "business school"
         and (
             "what programmes" in normalized
             or "which programmes" in normalized
@@ -45,6 +82,7 @@ def understand_query(
             or "programs available" in normalized
         )
     ):
+
         return QueryUnderstanding(
             original_query=question,
             search_query="business school programmes",
@@ -59,14 +97,17 @@ def understand_query(
     # ---------------------------------------------------------
 
     if (
-        "school of ai" in normalized
+        entity == "school of ai"
         and (
             "what programmes" in normalized
             or "which programmes" in normalized
             or "programmes are available" in normalized
             or "programmes available" in normalized
+            or "programs available" in normalized
+            or "programs are available" in normalized
         )
     ):
+
         return QueryUnderstanding(
             original_query=question,
             search_query="school of ai programmes",
@@ -76,52 +117,31 @@ def understand_query(
         )
 
     # ---------------------------------------------------------
-    # NQF level
+    # NQF
     # ---------------------------------------------------------
 
-    if "nqf" in normalized:
+    if (
+        "nqf" in normalized
+        or "qualification level" in normalized
+    ):
 
-        programme = None
+        search_query = question
 
-        known_programmes = {
-            "mba": "MBA",
-            "bba": "BBA",
-            "dbm": "DBM",
-            "pdbm": "PDBM",
-            "hcbm": "HCBM",
-            "pgpm": "PGPM",
-            "pgdm": "PGDM",
-            "pdds": "PDDS",
-            "bsc": "BSC",
-            "bitid": "BITID",
-            "hcss": "HCSS",
-        }
-
-        for key, value in known_programmes.items():
-
-            if key in normalized:
-                programme = value
-                break
-
-        if programme:
-
-            return QueryUnderstanding(
-                original_query=question,
-                search_query=f"{programme} NQF level",
-                intent="fact_lookup",
-                entity=programme,
-                attribute="nqf_level",
+        if entity:
+            search_query = (
+                f"{entity} NQF level"
             )
 
         return QueryUnderstanding(
             original_query=question,
-            search_query=question,
+            search_query=search_query,
             intent="fact_lookup",
+            entity=entity,
             attribute="nqf_level",
         )
 
     # ---------------------------------------------------------
-    # Fee questions
+    # Fees
     # ---------------------------------------------------------
 
     if any(
@@ -135,15 +155,23 @@ def understand_query(
         ]
     ):
 
+        search_query = question
+
+        if entity:
+            search_query = (
+                f"{entity} fees"
+            )
+
         return QueryUnderstanding(
             original_query=question,
-            search_query=question,
+            search_query=search_query,
             intent="fee_lookup",
+            entity=entity,
             attribute="fees",
         )
 
     # ---------------------------------------------------------
-    # Eligibility questions
+    # Eligibility / admission
     # ---------------------------------------------------------
 
     if any(
@@ -159,35 +187,78 @@ def understand_query(
         ]
     ):
 
+        search_query = question
+
+        if entity:
+            search_query = (
+                f"{entity} eligibility requirements"
+            )
+
         return QueryUnderstanding(
             original_query=question,
-            search_query=question,
+            search_query=search_query,
             intent="eligibility_lookup",
+            entity=entity,
             attribute="eligibility",
         )
 
     # ---------------------------------------------------------
-    # Duration questions
+    # Duration
     # ---------------------------------------------------------
 
     if any(
-        word in normalized
-        for word in [
+        phrase in normalized
+        for phrase in [
             "duration",
             "how long",
             "length",
         ]
     ):
 
+        search_query = question
+
+        if entity:
+            search_query = (
+                f"{entity} duration"
+            )
+
         return QueryUnderstanding(
             original_query=question,
-            search_query=question,
+            search_query=search_query,
             intent="duration_lookup",
+            entity=entity,
             attribute="duration",
         )
 
     # ---------------------------------------------------------
-    # Programme list without known school
+    # Credits
+    # ---------------------------------------------------------
+
+    if any(
+        word in normalized
+        for word in [
+            "credit",
+            "credits",
+        ]
+    ):
+
+        search_query = question
+
+        if entity:
+            search_query = (
+                f"{entity} credits"
+            )
+
+        return QueryUnderstanding(
+            original_query=question,
+            search_query=search_query,
+            intent="fact_lookup",
+            entity=entity,
+            attribute="credits",
+        )
+
+    # ---------------------------------------------------------
+    # Programme list
     # ---------------------------------------------------------
 
     if (
@@ -195,20 +266,24 @@ def understand_query(
         or "which programmes" in normalized
         or "programmes available" in normalized
         or "programs available" in normalized
+        or "what programs" in normalized
+        or "which programs" in normalized
     ):
 
         return QueryUnderstanding(
             original_query=question,
             search_query=question,
             intent="programme_list",
+            entity=entity,
         )
 
     # ---------------------------------------------------------
-    # Default
+    # General programme/entity question
     # ---------------------------------------------------------
 
     return QueryUnderstanding(
         original_query=question,
         search_query=question,
         intent="general",
+        entity=entity,
     )

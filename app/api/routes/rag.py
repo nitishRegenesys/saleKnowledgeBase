@@ -1,12 +1,12 @@
-from uuid import uuid4
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.rag.answer import answer_question
 from app.rag.conversation_service import (
     add_message,
+    create_session,
     get_messages,
+    session_exists,
 )
 
 
@@ -158,18 +158,70 @@ def chat(
     request: ChatRequest,
 ) -> ChatResponse:
 
-    session_id = (
-        request.session_id
-        or str(uuid4())
-    )
+    # ---------------------------------------------------------
+    # Create or validate conversation session
+    # ---------------------------------------------------------
+
+    if request.session_id:
+
+        session_id = request.session_id
+
+        if not session_exists(
+            session_id
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Conversation session "
+                    "not found."
+                ),
+            )
+
+    else:
+
+        try:
+
+            session_id = create_session()
+
+        except Exception as exc:
+
+            print(
+                "SESSION CREATE ERROR:",
+                repr(exc),
+            )
+
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Unable to create "
+                    "conversation session."
+                ),
+            ) from exc
 
     # ---------------------------------------------------------
     # Load previous conversation
     # ---------------------------------------------------------
 
-    previous_messages = get_messages(
-        session_id
-    )
+    try:
+
+        previous_messages = get_messages(
+            session_id
+        )
+
+    except Exception as exc:
+
+        print(
+            "CONVERSATION LOAD ERROR:",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to load "
+                "conversation history."
+            ),
+        ) from exc
 
     conversation_history = [
         {
@@ -219,21 +271,55 @@ def chat(
     # Save user message
     # ---------------------------------------------------------
 
-    add_message(
-        session_id,
-        "user",
-        request.message,
-    )
+    try:
+
+        add_message(
+            session_id,
+            "user",
+            request.message,
+        )
+
+    except Exception as exc:
+
+        print(
+            "USER MESSAGE SAVE ERROR:",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to save "
+                "user message."
+            ),
+        ) from exc
 
     # ---------------------------------------------------------
     # Save assistant message
     # ---------------------------------------------------------
 
-    add_message(
-        session_id,
-        "assistant",
-        result["answer"],
-    )
+    try:
+
+        add_message(
+            session_id,
+            "assistant",
+            result["answer"],
+        )
+
+    except Exception as exc:
+
+        print(
+            "ASSISTANT MESSAGE SAVE ERROR:",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to save "
+                "assistant message."
+            ),
+        ) from exc
 
     # ---------------------------------------------------------
     # Return
