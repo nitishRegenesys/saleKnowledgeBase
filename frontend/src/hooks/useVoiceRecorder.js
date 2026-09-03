@@ -8,6 +8,31 @@ import {
 
 const TARGET_SAMPLE_RATE = 16000;
 
+// Voice-activity detection (auto-stop) tuning:
+// - frame RMS at/above SPEECH_RMS_THRESHOLD counts as speech
+// - frame RMS below SILENCE_RMS_THRESHOLD counts as silence
+// - values in between are a hysteresis band (state unchanged)
+// - SILENCE_TIMEOUT_MS of sustained silence after speech
+//   triggers the auto-stop callback
+const SPEECH_RMS_THRESHOLD = 0.02;
+const SILENCE_RMS_THRESHOLD = 0.01;
+const SILENCE_TIMEOUT_MS = 1800;
+
+
+function computeRms(samples) {
+  if (!samples || samples.length === 0) {
+    return 0;
+  }
+
+  let sum = 0;
+
+  for (let i = 0; i < samples.length; i++) {
+    sum += samples[i] * samples[i];
+  }
+
+  return Math.sqrt(sum / samples.length);
+}
+
 
 function downsampleTo16k(
   source,
@@ -117,6 +142,7 @@ function bytesToBase64(bytes) {
 function useVoiceRecorder({
   onFrame,
   onError,
+  onSilence,
 }) {
   const [isRecording, setIsRecording] =
     useState(false);
@@ -133,11 +159,18 @@ function useVoiceRecorder({
 
   const onFrameRef = useRef(onFrame);
   const onErrorRef = useRef(onError);
+  const onSilenceRef = useRef(onSilence);
+
+  // Voice-activity detection state
+  const hasSpeechRef = useRef(false);
+  const silenceStartRef = useRef(null);
+  const finishedRef = useRef(false);
 
   useEffect(() => {
     onFrameRef.current = onFrame;
     onErrorRef.current = onError;
-  }, [onFrame, onError]);
+    onSilenceRef.current = onSilence;
+  }, [onFrame, onError, onSilence]);
 
 
   // ==========================================================
@@ -279,6 +312,11 @@ function useVoiceRecorder({
         processor.onaudioprocess = (
           event
         ) => {
+          // Auto-stop already fired — ignore stragglers.
+          if (finishedRef.current) {
+            return;
+          }
+
           const input =
             event.inputBuffer.getChannelData(
               0
@@ -308,6 +346,37 @@ function useVoiceRecorder({
               );
             }
           }
+
+          // ---- Silence detection (auto-stop) ----
+          const rms =
+            computeRms(resampled);
+
+          if (rms >= SPEECH_RMS_THRESHOLD) {
+            hasSpeechRef.current = true;
+            silenceStartRef.current = null;
+          } else if (
+            rms < SILENCE_RMS_THRESHOLD &&
+            hasSpeechRef.current
+          ) {
+            if (silenceStartRef.current === null) {
+              silenceStartRef.current =
+                performance.now();
+            } else if (
+              performance.now() -
+                silenceStartRef.current >=
+              SILENCE_TIMEOUT_MS
+            ) {
+              finishedRef.current = true;
+
+              cleanup();
+
+              if (onSilenceRef.current) {
+                onSilenceRef.current();
+              }
+
+              return;
+            }
+          }
         };
 
         processor.connect(
@@ -319,6 +388,11 @@ function useVoiceRecorder({
         streamRef.current = stream;
         contextRef.current = context;
         processorRef.current = processor;
+
+        // Reset voice-activity state for this recording
+        hasSpeechRef.current = false;
+        silenceStartRef.current = null;
+        finishedRef.current = false;
 
         setIsRecording(true);
         setIsRequesting(false);

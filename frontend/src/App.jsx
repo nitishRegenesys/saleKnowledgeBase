@@ -124,6 +124,7 @@ function App() {
   } = useVoiceRecorder({
     onFrame: handleAudioFrame,
     onError: handleMicError,
+    onSilence: stopMicAndFinalize,
   });
 
 
@@ -1387,8 +1388,8 @@ function App() {
             {voiceStatus === "recording" && (
               <>
                 {partialText
-                  ? `“${partialText}” — listening... press the mic button again when finished.`
-                  : "Listening... press the mic button again when finished."}
+                  ? `“${partialText}” — listening... stops automatically after you finish speaking.`
+                  : "Listening... speak now; it stops automatically after you finish (or click the mic to stop)."}
               </>
             )}
 
