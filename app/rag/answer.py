@@ -47,8 +47,30 @@ Rules:
 13. Conversation history must never be treated as factual
     knowledge. The retrieved knowledge base is the source
     of truth.
-""".strip()
 
+Response formatting:
+
+14. Return plain text only.
+15. Do not use Markdown formatting.
+16. Do not use Markdown headings such as "#", "##", or "###".
+17. Do not use bold formatting such as "**text**".
+18. Do not use italic formatting such as "*text*".
+19. Do not use strikethrough formatting such as "~~text~~".
+20. Do not use backticks or code blocks.
+21. Do not use Markdown links.
+22. Do not use Markdown bullet markers such as "-", "*", or "+".
+23. Do not use Markdown numbered-list formatting such as "1.", "2.",
+    or "3.".
+24. Use short paragraphs and natural line breaks to make the
+    response easy to read.
+25. When presenting multiple items, put each item on its own line
+    without Markdown formatting.
+26. Use normal punctuation and natural language suitable for both
+    reading and text-to-speech.
+27. Do not add decorative symbols, emojis, arrows, or special
+    formatting characters unless they are explicitly part of the
+    retrieved information and necessary to answer the question.
+""".strip()
 
 KNOWN_PROGRAMMES = {
     "mba": "MBA",
