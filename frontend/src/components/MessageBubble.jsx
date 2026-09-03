@@ -26,16 +26,17 @@ function MessageBubble({
             {typeof onSpeak === "function" && (
               <button
                 type="button"
-                className="speak-button"
+                className={`speak-button ${
+                  speaking ? "speak-button-stop" : ""
+                }`}
                 onClick={() => onSpeak(content)}
-                disabled={speaking}
                 title={
                   speaking
-                    ? "Playing..."
+                    ? "Stop"
                     : "Play answer aloud"
                 }
               >
-                {speaking ? "..." : "🔊"}
+                {speaking ? "⏹" : "🔊"}
               </button>
             )}
           </div>

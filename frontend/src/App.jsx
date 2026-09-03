@@ -83,6 +83,12 @@ function App() {
   const finalizeDeadlineTimerRef = useRef(null);
   const micActiveRef = useRef(false);
 
+  // Stop-speech: mutes the rest of a streamed turn and
+  // tracks which replay message is currently speaking
+  const speechMutedRef = useRef(false);
+  const [speakingMessageIdx, setSpeakingMessageIdx] =
+    useState(null);
+
   const voiceStatusRef = useRef("idle");
 
   useEffect(() => {
@@ -91,7 +97,18 @@ function App() {
 
   useEffect(() => {
     return () => {
-      closeVoiceSocket();
+      // Inline socket close (unmount-only cleanup path).
+      const ws = voiceWsRef.current;
+
+      voiceWsRef.current = null;
+
+      if (ws) {
+        try {
+          ws.close();
+        } catch {
+          // Ignore
+        }
+      }
     };
   }, []);
 
@@ -333,14 +350,26 @@ function App() {
 
   function stopPlayback() {
     if (audioRef.current) {
-      audioRef.current.pause();
+      const audio = audioRef.current;
+
+      audio.pause();
+
+      // Release the blob URL (the ended/error handlers do
+      // not fire for a paused element).
+      if (
+        audio.src &&
+        audio.src.startsWith("blob:")
+      ) {
+        URL.revokeObjectURL(audio.src);
+      }
+
       audioRef.current = null;
     }
 
     setIsSpeaking(false);
   }
 
-  async function playSpeech(text) {
+  async function playSpeech(idx, text) {
     stopPlayback();
 
     try {
@@ -354,16 +383,19 @@ function App() {
       audio.onended = () => {
         URL.revokeObjectURL(audioUrl);
         audioRef.current = null;
+        setSpeakingMessageIdx(null);
         setIsSpeaking(false);
       };
 
       audio.onerror = () => {
         URL.revokeObjectURL(audioUrl);
         audioRef.current = null;
+        setSpeakingMessageIdx(null);
         setIsSpeaking(false);
       };
 
       audioRef.current = audio;
+      setSpeakingMessageIdx(idx);
       setIsSpeaking(true);
 
       try {
@@ -371,6 +403,7 @@ function App() {
       } catch (err) {
         URL.revokeObjectURL(audioUrl);
         audioRef.current = null;
+        setSpeakingMessageIdx(null);
         setIsSpeaking(false);
 
         throw err;
@@ -388,13 +421,48 @@ function App() {
     }
   }
 
-  function handleSpeak(text) {
+  function handleSpeak(idx, text) {
     if (isSpeaking) {
-      stopPlayback();
-      return;
+      // Stop if the same message was clicked, otherwise
+      // interrupt the current audio and play the new one.
+      if (speakingMessageIdx === idx) {
+        stopAllSpeech();
+        return;
+      }
+
+      stopAllSpeech();
     }
 
-    playSpeech(text);
+    playSpeech(idx, text);
+  }
+
+  function handleStopSpeech() {
+    stopAllSpeech();
+  }
+
+  function stopAllSpeech() {
+    // Mute the rest of any streamed turn: drainSpeak and
+    // onSentenceSpoken check this flag so late audio.chunk /
+    // speak.done events cannot resurrect the audio.
+    speechMutedRef.current = true;
+
+    stopPlayback();
+
+    if (speechQueueRef.current.length > 0) {
+      speechQueueRef.current.forEach((url) => {
+        URL.revokeObjectURL(url);
+      });
+
+      speechQueueRef.current = [];
+    }
+
+    pendingSentencesRef.current = [];
+    sentenceBytesRef.current = [];
+    playInFlightRef.current = false;
+    speakInFlightRef.current = false;
+
+    setSpeakingMessageIdx(null);
+    setIsSpeaking(false);
   }
 
 
@@ -432,6 +500,7 @@ function App() {
     speakInFlightRef.current = false;
     sentenceBytesRef.current = [];
 
+    setSpeakingMessageIdx(null);
     setPartialText("");
     setStreamingAnswer(null);
   }
@@ -442,6 +511,7 @@ function App() {
     answerStreamingRef.current = false;
     micActiveRef.current = false;
     finalTranscriptRef.current = "";
+    speechMutedRef.current = false;
 
     clearFinalizeTimers();
 
@@ -558,6 +628,7 @@ function App() {
     micActiveRef.current = false;
     turnInProgressRef.current = false;
     answerStreamingRef.current = false;
+    speechMutedRef.current = false;
 
     setVoiceStatus("connecting");
 
@@ -827,6 +898,10 @@ function App() {
   }
 
   function drainSpeak() {
+    if (speechMutedRef.current) {
+      return;
+    }
+
     if (speakInFlightRef.current) {
       return;
     }
@@ -861,6 +936,15 @@ function App() {
     const parts = sentenceBytesRef.current;
 
     sentenceBytesRef.current = [];
+
+    // Speech was stopped: discard any late audio for the
+    // in-flight sentence instead of queueing it.
+    if (speechMutedRef.current) {
+      drainSpeak();
+      maybeFinishTurn();
+
+      return;
+    }
 
     if (parts.length > 0) {
       let total = 0;
@@ -983,7 +1067,10 @@ function App() {
           setStreamingAnswer(null);
           loadSessions();
 
-          if (!voiceAbortedRef.current) {
+          if (
+            !voiceAbortedRef.current &&
+            !speechMutedRef.current
+          ) {
             setVoiceStatus("speaking");
           }
         },
@@ -1158,10 +1245,17 @@ function App() {
                         voiceAvailable === true &&
                         message.role ===
                           "assistant"
-                          ? handleSpeak
+                          ? (content) =>
+                              handleSpeak(
+                                index,
+                                content
+                              )
                           : undefined
                       }
-                      speaking={isSpeaking}
+                      speaking={
+                        speakingMessageIdx ===
+                        index
+                      }
                     />
 
 
@@ -1311,6 +1405,16 @@ function App() {
               voiceStatus === "connecting") &&
               "Answers are generated from the Sales Knowledge Base."}
           </div>
+
+          {isSpeaking && (
+            <button
+              type="button"
+              className="stop-speech-button"
+              onClick={handleStopSpeech}
+            >
+              ⏹ Stop speaking
+            </button>
+          )}
 
         </footer>
 
