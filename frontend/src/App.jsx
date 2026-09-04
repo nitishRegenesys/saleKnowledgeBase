@@ -191,84 +191,82 @@ function App() {
   // Send message
   // ==========================================================
 
-  async function handleSend(message) {
+async function handleSend(message) {
+  cancelVoice();
 
-    cancelVoice();
+  setError(null);
+  setVoiceError(null);
 
-    setError(null);
-    setVoiceError(null);
+  const userMessage = {
+    role: "user",
+    content: message,
+  };
 
-    const userMessage = {
-      role: "user",
-      content: message,
-    };
+  setMessages((current) => [
+    ...current,
+    userMessage,
+  ]);
 
-    setMessages((current) => [
-      ...current,
-      userMessage,
-    ]);
+  setLoading(true);
 
-    setLoading(true);
+  // Create an empty assistant message immediately.
+  setStreamingAnswer({
+    text: "",
+  });
 
-    try {
-
-      const result =
-        await sendChatMessage({
-          sessionId,
-          message,
-          limit: 5,
-        });
-
-
-      // ------------------------------------------------------
-      // Store session ID
-      // ------------------------------------------------------
-
-      setSessionId(
-        result.session_id
-      );
-
+  try {
+    await streamChatMessage({
+      sessionId,
+      message,
+      limit: 5,
 
       // ------------------------------------------------------
-      // Add assistant response
+      // Receive answer progressively
       // ------------------------------------------------------
 
-      const assistantMessage = {
-        role: "assistant",
-        content: result.answer,
-        sources: result.sources || [],
-      };
-
-      setMessages((current) => [
-        ...current,
-        assistantMessage,
-      ]);
-
+      onDelta: (piece) => {
+        setStreamingAnswer((current) => ({
+          text: (current?.text || "") + piece,
+        }));
+      },
 
       // ------------------------------------------------------
-      // Refresh sidebar
+      // Final response
       // ------------------------------------------------------
 
-      await loadSessions();
+      onDone: (data) => {
+        setSessionId(data.session_id);
 
-    } catch (err) {
+        setMessages((current) => [
+          ...current,
+          {
+            role: "assistant",
+            content: data.answer,
+            sources: data.sources || [],
+          },
+        ]);
 
-      console.error(
-        "Chat error:",
-        err
-      );
+        setStreamingAnswer(null);
 
-      setError(
-        err.message ||
-          "Something went wrong while processing your message."
-      );
+        loadSessions();
+      },
+    });
+  } catch (err) {
+    console.error(
+      "Streaming chat error:",
+      err
+    );
 
-    } finally {
+    setStreamingAnswer(null);
 
-      setLoading(false);
-
-    }
+    setError(
+      err.message ||
+        "Something went wrong while processing your message."
+    );
+  } finally {
+    setLoading(false);
   }
+}
 
 
   // ==========================================================
@@ -1298,7 +1296,7 @@ function App() {
               )}
 
 
-              {loading && (
+              {loading && !streamingAnswer &&(
 
                 <div className="message-row message-row-assistant">
 
