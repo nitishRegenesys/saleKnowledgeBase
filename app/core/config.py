@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     llm_model: str = "openai/gpt-oss-120b"
     groq_api_key: str | None = None
 
+    voice_engine_url: str = "http://localhost:8001"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

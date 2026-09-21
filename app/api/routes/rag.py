@@ -1,7 +1,13 @@
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.rag.answer import answer_question
+from app.rag.answer import (
+    answer_question,
+    answer_question_stream,
+)
 from app.rag.conversation_service import (
     add_message,
     create_session,
@@ -466,4 +472,137 @@ def chat(
             )
             for source in result["sources"]
         ],
+    )
+
+
+# ============================================================
+# CHAT STREAM (SSE) — streaming answer for voice turns
+# ============================================================
+
+
+@router.post(
+    "/chat/stream",
+)
+async def chat_stream(
+    request: ChatRequest,
+) -> StreamingResponse:
+
+    # ---------------------------------------------------------
+    # Resolve / create the session (mirrors the /chat logic)
+    # ---------------------------------------------------------
+
+    if not request.session_id or not session_exists(
+        request.session_id
+    ):
+        session_id = create_session()
+    else:
+        session_id = request.session_id
+
+    try:
+
+        previous_messages = get_messages(
+            session_id
+        )
+
+    except Exception as exc:
+
+        print(
+            "CONVERSATION STREAM LOAD ERROR:",
+            repr(exc),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to load "
+                "conversation history."
+            ),
+        ) from exc
+
+    conversation_history = [
+        {
+            "role": message.role,
+            "content": message.content,
+        }
+        for message in previous_messages
+    ]
+
+    # ---------------------------------------------------------
+    # SSE event generator
+    # ---------------------------------------------------------
+
+    async def event_generator():
+
+        try:
+
+            async for event in answer_question_stream(
+                request.message,
+                limit=request.limit,
+                category=request.category,
+                subcategory=request.subcategory,
+                conversation_history=conversation_history,
+            ):
+
+                if event["type"] == "delta":
+
+                    payload = {
+                        "type": "delta",
+                        "text": event["text"],
+                    }
+
+                else:
+
+                    answer = event["answer"]
+
+                    add_message(
+                        session_id,
+                        "user",
+                        request.message,
+                    )
+
+                    add_message(
+                        session_id,
+                        "assistant",
+                        answer,
+                    )
+
+                    payload = {
+                        "type": "done",
+                        "session_id": session_id,
+                        "answer": answer,
+                        "sources": event["sources"],
+                    }
+
+                yield (
+                    f"data: "
+                    f"{json.dumps(payload)}\n\n"
+                )
+
+        except Exception as exc:
+
+            print(
+                "CHAT STREAM ERROR:",
+                repr(exc),
+            )
+
+            payload = {
+                "type": "error",
+                "detail": (
+                    "Unable to process "
+                    "the conversation."
+                ),
+            }
+
+            yield (
+                f"data: "
+                f"{json.dumps(payload)}\n\n"
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )

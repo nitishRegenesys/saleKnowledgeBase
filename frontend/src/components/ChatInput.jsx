@@ -3,6 +3,11 @@ import { useState } from "react";
 function ChatInput({
   onSend,
   disabled = false,
+  onMicrophoneToggle,
+  recording = false,
+  micDisabled = false,
+  transcribing = false,
+  voiceEnabled = false,
 }) {
   const [message, setMessage] = useState("");
 
@@ -26,6 +31,14 @@ function ChatInput({
     }
   }
 
+  function handleMicClick() {
+    if (micDisabled || transcribing || disabled) {
+      return;
+    }
+
+    onMicrophoneToggle();
+  }
+
   return (
     <form
       className="chat-input-container"
@@ -41,6 +54,28 @@ function ChatInput({
         disabled={disabled}
         rows={1}
       />
+
+      {voiceEnabled && (
+        <button
+          type="button"
+          className={`mic-button ${
+            recording ? "mic-button-recording" : ""
+          }`}
+          onClick={handleMicClick}
+          disabled={
+            disabled || micDisabled || transcribing
+          }
+          title={
+            recording
+              ? "Stop recording"
+              : transcribing
+                ? "Transcribing..."
+                : "Record a question"
+          }
+        >
+          {transcribing ? "..." : recording ? "■" : "🎤"}
+        </button>
+      )}
 
       <button
         type="submit"
