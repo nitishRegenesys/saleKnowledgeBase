@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.rag import router as rag_router
 from app.api.routes.voice import router as voice_router
@@ -76,3 +78,22 @@ def health() -> dict[str, str]:
     return {
         "status": "ok",
     }
+
+
+FRONTEND_DIST = (
+    Path(__file__).resolve().parent.parent
+    / "frontend"
+    / "dist"
+)
+
+
+if FRONTEND_DIST.is_dir():
+
+    app.mount(
+        "/",
+        StaticFiles(
+            directory=FRONTEND_DIST,
+            html=True,
+        ),
+        name="frontend",
+    )

@@ -1,0 +1,21 @@
+
+services:
+  sale-knowledge-base:
+    container_name: sale-knowledge-base
+    build:
+      context: .
+      args:
+        VITE_API_BASE_URL: ""
+    image: sale-knowledge-base:1.0.0
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      VOICE_ENGINE_URL: http://host.docker.internal:8001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      - "127.0.0.1:8000:8000"
