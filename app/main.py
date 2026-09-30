@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes.calls import router as calls_router
 from app.api.routes.rag import router as rag_router
 from app.api.routes.voice import router as voice_router
 from app.rag.embeddings import get_embedding_model
@@ -63,6 +64,7 @@ app.add_middleware(
 
 app.include_router(rag_router)
 app.include_router(voice_router)
+app.include_router(calls_router)
 
 
 # ============================================================
