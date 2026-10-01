@@ -84,68 +84,12 @@ def _engine_detail(response) -> str:
 MOCK_CALL_CONTACTS = [
     {
         "id": "c-1001",
-        "name": "Thandi Nkosi",
-        "phone": "0734567891",
-        "company": "Meridian Retail",
-        "role": "Procurement Lead",
+        "name": "Dheer",
+        "phone": "0730825043",
+        "company": "Regenesys",
+        "role": "AI Lead",
         "status": "warm",
-    },
-    {
-        "id": "c-1002",
-        "name": "Rajen Pillay",
-        "phone": "0826114502",
-        "company": "Umoya Logistics",
-        "role": "Operations Manager",
-        "status": "new",
-    },
-    {
-        "id": "c-1003",
-        "name": "Sarah Adams",
-        "phone": "0718892140",
-        "company": "Cape Digital",
-        "role": "Head of People",
-        "status": "hot",
-    },
-    {
-        "id": "c-1004",
-        "name": "Johan van der Merwe",
-        "phone": "0837745219",
-        "company": "Highveld Mining",
-        "role": "Training Coordinator",
-        "status": "warm",
-    },
-    {
-        "id": "c-1005",
-        "name": "Zanele Dlamini",
-        "phone": "0763309821",
-        "company": "Isizwe Fintech",
-        "role": "HR Business Partner",
-        "status": "new",
-    },
-    {
-        "id": "c-1006",
-        "name": "Aisha Patel",
-        "phone": "0645512038",
-        "company": "Bayview Clinics",
-        "role": "Regional Director",
-        "status": "cold",
-    },
-    {
-        "id": "c-1007",
-        "name": "Sipho Khumalo",
-        "phone": "0812204476",
-        "company": "Talenteq",
-        "role": "Account Manager",
-        "status": "warm",
-    },
-    {
-        "id": "c-1008",
-        "name": "Charmaine October",
-        "phone": "0721180935",
-        "company": "Karoo Agri Group",
-        "role": "CEO",
-        "status": "hot",
-    },
+    }
 ]
 
 

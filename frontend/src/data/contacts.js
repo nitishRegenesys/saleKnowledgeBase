@@ -14,21 +14,5 @@ export const OFFLINE_CONTACTS = [
     company: "Meridian Retail",
     role: "Procurement Lead",
     status: "warm",
-  },
-  {
-    id: "offline-2",
-    name: "Rajen Pillay",
-    phone: "0826114502",
-    company: "Umoya Logistics",
-    role: "Operations Manager",
-    status: "new",
-  },
-  {
-    id: "offline-3",
-    name: "Sarah Adams",
-    phone: "0718892140",
-    company: "Cape Digital",
-    role: "Head of People",
-    status: "hot",
-  },
+  }
 ];
