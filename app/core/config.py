@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     voice_engine_url: str = "http://localhost:8001"
 
+    # X-API-Key the backend presents to the voice-engine calling endpoints.
+    # Kept server-side so the browser never sees the credential.
+    calls_api_key: str = "secret-api-key"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

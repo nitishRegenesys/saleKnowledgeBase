@@ -1,0 +1,33 @@
+# =============================================================================
+# Build context exclusions for the single-container image.
+# =============================================================================
+
+# Virtualenvs (the repo has one at the root and a stray one inside app/)
+.venv/
+venv/
+app/venv/
+
+# Python caches / build artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Frontend dependencies + build output (rebuilt inside the image)
+frontend/node_modules/
+frontend/dist/
+
+# Local secrets — injected at runtime via docker-compose `env_file: .env`
+.env
+
+# Repo/tooling noise
+.git/
+.gitignore
+.DS_Store
+*.log
+
+# The voice-engine has its own image/container (voice-engine/Dockerfile)
+voice-engine/
