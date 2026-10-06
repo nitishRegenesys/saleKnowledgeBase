@@ -12,8 +12,14 @@ class Settings(BaseSettings):
 
     embedding_model: str = "BAAI/bge-base-en-v1.5"
 
-    llm_provider: str = "groq"
-    llm_model: str = "openai/gpt-oss-120b"
+    llm_provider: str = "bedrock"
+    llm_model: str = "qwen.qwen3-235b-a22b-2507-v1:0"
+
+    # Amazon Bedrock API key (bearer token, "ABSK...") for the Runtime APIs.
+    aws_api_key: str | None = None
+    aws_bedrock_region: str = "us-west-2"
+
+    # Kept for the legacy Groq fallback provider.
     groq_api_key: str | None = None
 
     voice_engine_url: str = "http://localhost:8001"

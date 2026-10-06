@@ -7,7 +7,7 @@ single process and a single URL.
 
 ```
 browser ──► http://localhost:8000/            FastAPI + StaticFiles  (UI)
-            http://localhost:8000/api/v1/rag/*  RAG over Postgres/pgvector + Groq
+            http://localhost:8000/api/v1/rag/*  RAG over Postgres/pgvector + AWS Bedrock
             ws://localhost:8000/api/v1/voice/ws relay ──► voice-engine container :8001
 ```
 
@@ -46,8 +46,9 @@ on 8000 + `npm run dev` on 5173) still works unchanged.
 | Frontend API base | hardcoded `http://localhost:8000` | page origin (`window.location.origin`) | UI + API share one origin; override with `--build-arg VITE_API_BASE_URL=...` |
 | Embedding model | downloaded on first start | baked into the image (`/opt/hf-cache`) | fast, offline-capable startup |
 
-Everything else (`DB_*` RDS credentials, `GROQ_API_KEY`, `LLM_*`) comes straight
-from the repo `.env` via `env_file:` — nothing else changes.
+Everything else (`DB_*` RDS credentials, `AWS_API_KEY`, `AWS_BEDROCK_REGION`,
+`LLM_*`) comes straight from the repo `.env` via `env_file:` — nothing else
+changes.
 
 The voice-engine container needs **no** change: its `FACILITATOR_API_URL`
 (`http://host.docker.internal:8000`) resolves to this container's published
